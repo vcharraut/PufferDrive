@@ -32,6 +32,9 @@ import pufferlib
 import pufferlib.sweep
 import pufferlib.vector
 import pufferlib.pytorch
+import pufferlib.viz
+
+import mediapy
 
 try:
     from pufferlib import _C
@@ -987,18 +990,17 @@ def train(env_name, args=None, vecenv=None, policy=None, logger=None):
     return all_logs
 
 
-def eval(env_name, args=None, vecenv=None, policy=None):
+def eval(env_name, args=None, vecenv=None, policy=None, puffer_render=False):
     args = args or load_config(env_name)
     backend = args["vec"]["backend"]
+
     if backend != "PufferEnv":
         backend = "Serial"
 
     args["vec"] = dict(backend=backend, num_envs=1)
     vecenv = vecenv or load_env(env_name, args)
-
     policy = policy or load_policy(args, vecenv, env_name)
-    ob, info = vecenv.reset()
-    driver = vecenv.driver_env
+
     num_agents = vecenv.observation_space.shape[0]
     device = args["train"]["device"]
 
@@ -1009,40 +1011,73 @@ def eval(env_name, args=None, vecenv=None, policy=None):
             lstm_c=torch.zeros(num_agents, policy.hidden_size, device=device),
         )
 
-    frames = []
-    while True:
-        render = driver.render()
-        if len(frames) < args["save_frames"]:
-            frames.append(render)
+    if puffer_render:
+        frames = []
+        driver = vecenv.driver_env
+        ob, _ = vecenv.reset()
 
-        # Screenshot Ocean envs with F12, gifs with control + F12
-        if driver.render_mode == "ansi":
-            print("\033[0;0H" + render + "\n")
-            time.sleep(1 / args["fps"])
-        elif driver.render_mode == "rgb_array":
-            pass
-            # import cv2
-            # render = cv2.cvtColor(render, cv2.COLOR_RGB2BGR)
-            # cv2.imshow('frame', render)
-            # cv2.waitKey(1)
-            # time.sleep(1/args['fps'])
+        while True:
+            render = driver.render()
+            if len(frames) < args["save_frames"]:
+                frames.append(render)
 
-        with torch.no_grad():
-            ob = torch.as_tensor(ob).to(device)
-            logits, value = policy.forward_eval(ob, state)
-            action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
-            action = action.cpu().numpy().reshape(vecenv.action_space.shape)
+            # Screenshot Ocean envs with F12, gifs with control + F12
+            if driver.render_mode == "ansi":
+                print("\033[0;0H" + render + "\n")
+                time.sleep(1 / args["fps"])
+            elif driver.render_mode == "rgb_array":
+                pass
+                # import cv2
+                # render = cv2.cvtColor(render, cv2.COLOR_RGB2BGR)
+                # cv2.imshow('frame', render)
+                # cv2.waitKey(1)
+                # time.sleep(1/args['fps'])
 
-        if isinstance(logits, torch.distributions.Normal):
-            action = np.clip(action, vecenv.action_space.low, vecenv.action_space.high)
+            with torch.no_grad():
+                ob = torch.as_tensor(ob).to(device)
+                logits, value = policy.forward_eval(ob, state)
+                action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
+                action = action.cpu().numpy().reshape(vecenv.action_space.shape)
 
-        ob = vecenv.step(action)[0]
+            if isinstance(logits, torch.distributions.Normal):
+                action = np.clip(action, vecenv.action_space.low, vecenv.action_space.high)
 
-        if len(frames) > 0 and len(frames) == args["save_frames"]:
-            import imageio
+            ob = vecenv.step(action)[0]
 
-            imageio.mimsave(args["gif_path"], frames, fps=args["fps"], loop=0)
-            frames.append("Done")
+            if len(frames) > 0 and len(frames) == args["save_frames"]:
+                import imageio
+
+                imageio.mimsave(args["gif_path"], frames, fps=args["fps"], loop=0)
+                frames.append("Done")
+
+    else:
+        for i in range(10):  # TODO make num_videos configurable
+            ob, _ = vecenv.reset()
+            frames = []
+            print(f"Generating video {i} for {env_name}")
+
+            os.makedirs("videos", exist_ok=True)  # TODO make video path configurable
+            video_path = f"videos/eval_{env_name}_{i}.mp4"
+
+            for _ in range(91):  # TODO add env length
+                scenario = vecenv.get_state()[0]  # TODO make env_indices configurable
+
+                img = pufferlib.viz.plot_simulator_state(scenario)
+
+                with torch.no_grad():
+                    ob = torch.as_tensor(ob).to(device)
+                    logits, value = policy.forward_eval(ob, state)
+                    action, logprob, _ = pufferlib.pytorch.sample_logits(logits)
+                    action = action.cpu().numpy().reshape(vecenv.action_space.shape)
+
+                if isinstance(logits, torch.distributions.Normal):
+                    action = np.clip(action, vecenv.action_space.low, vecenv.action_space.high)
+
+                ob = vecenv.step(action)[0]
+
+                frames.append(img)
+
+            mediapy.write_video(video_path, np.array(frames), fps=10)
 
 
 def sweep(args=None, env_name=None):
