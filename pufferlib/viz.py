@@ -67,7 +67,14 @@ def img_from_fig(fig) -> np.ndarray:
     return img
 
 
-def plot_bounding_boxes(ax, bboxes: np.ndarray, color: np.ndarray, alpha: float = 1.0, label=None) -> None:
+def plot_bounding_boxes(
+    ax,
+    bboxes: np.ndarray,
+    color: np.ndarray,
+    alpha: float = 1.0,
+    zorder: int = 3,
+    label=None,
+) -> None:
     """Plots multiple bounding boxes.
 
     Args:
@@ -109,7 +116,7 @@ def plot_bounding_boxes(ax, bboxes: np.ndarray, color: np.ndarray, alpha: float 
         [tl[1, :], tr[1, :], br[1, :], bl[1, :], tl[1, :]],
         color=color,
         alpha=alpha,
-        zorder=4,
+        zorder=zorder,
         label=label,
     )
 
@@ -119,7 +126,7 @@ def plot_bounding_boxes(ax, bboxes: np.ndarray, color: np.ndarray, alpha: float 
         [cl[1, :], cr[1, :], cf[1, :], cl[1, :]],
         color=color,
         alpha=alpha,
-        zorder=6,
+        zorder=zorder,
         label=label,
     )
 
@@ -154,7 +161,7 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
             obj_color = AGENT_COLOR["collision"]
 
         bbox = np.array((x, y, length, width, heading)).reshape(1, 5)
-        plot_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
+        plot_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5, zorder=4)
 
     # Pedestrian
     if entity_type == 2:
@@ -182,19 +189,19 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
 
     # Road lane
     if entity_type == 4:
-        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=1)
+        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=1, zorder=1)
 
     # Road line
     if entity_type == 5:
-        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=1, linestyle="--")
+        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=1, linestyle="--", zorder=1)
 
     # Road edge
     if entity_type == 6:
-        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=2)
+        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=2, zorder=1)
 
     # Stop sign
     if entity_type == 7:
-        ax.scatter(entity["traj_x"], entity["traj_y"], color=obj_color, s=150, marker="H", zorder=3)
+        ax.scatter(entity["traj_x"], entity["traj_y"], color=obj_color, s=150, marker="H", zorder=2)
 
     # Crosswalk
     if entity_type == 8:
@@ -207,7 +214,7 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
                 linewidth=2,
                 alpha=0.4,
                 hatch=r"//",
-                zorder=1,
+                zorder=2,
             )
         )
 
