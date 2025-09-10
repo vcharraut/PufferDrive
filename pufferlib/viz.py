@@ -1,17 +1,73 @@
+import dataclasses
+import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Polygon
+from matplotlib.patches import Circle, Polygon
 import numpy as np
 
 
-def plot_numpy_bounding_boxes(
-    ax,
-    bboxes: np.ndarray,
-    color: np.ndarray,
-    alpha=1.0,
-    line_width_scale: float = 1.5,
-    as_center_pts: bool = False,
-    label=None,
-) -> None:
+ENTITY_COLORS = {
+    1: np.array([65, 105, 225]) / 255.0,  # Vehicle (Royal Blue)
+    2: np.array([0, 255, 0]) / 255.0,  # Pedestrian (Green)
+    3: np.array([255, 0, 255]) / 255.0,  # Cyclist (Magenta)
+    4: np.array([211, 211, 211]) / 255.0,  # Road lane (Light Gray)
+    5: np.array([80, 80, 80]) / 255.0,  # Road Line (Gray)
+    6: np.array([0, 0, 0]) / 255.0,  # Road Edge (Black)
+    7: np.array([255, 0, 0]) / 255.0,  # Stop Sign (Red)
+}
+
+AGENT_COLOR = {
+    "ok": np.array([65, 105, 225]) / 255.0,  # Vehicle (Royal Blue)
+    "collision": np.array([255, 0, 0]) / 255.0,  # Vehicle in collision (Red)
+    "inactive": np.array([211, 211, 211]) / 255.0,  # Inactive vehicle (Light Gray)
+    "static": np.array([128, 128, 128]) / 255.0,  # Static vehicle (Gray)
+}
+
+
+@dataclasses.dataclass
+class VizConfig:
+    """Config for visualization."""
+
+    front_x: float = 75.0
+    back_x: float = 75.0
+    front_y: float = 75.0
+    back_y: float = 75.0
+    px_per_meter: float = 10.0
+    show_agent_id: bool = True
+    center_agent_idx: int = -1
+
+
+def init_fig_ax_via_size(x_px: float, y_px: float) -> tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]:
+    """Initializes a figure with given size in pixel."""
+    fig, ax = plt.subplots()
+    # Sets output image to pixel resolution.
+    dpi = 200
+    fig.set_size_inches([x_px / dpi, y_px / dpi])
+    fig.set_dpi(dpi)
+    fig.set_facecolor("white")
+
+    return fig, ax
+
+
+def init_fig_ax(vis_config: VizConfig = VizConfig()) -> tuple[matplotlib.figure.Figure, matplotlib.axes.Axes]:
+    """Initializes a figure with vis_config."""
+    return init_fig_ax_via_size(
+        (vis_config.front_x + vis_config.back_x) * vis_config.px_per_meter,
+        (vis_config.front_y + vis_config.back_y) * vis_config.px_per_meter,
+    )
+
+
+def img_from_fig(fig) -> np.ndarray:
+    """Returns a [H, W, 3] uint8 np image from fig.canvas.tostring_argb()."""
+    fig.subplots_adjust(left=0.02, bottom=0.02, right=0.98, top=0.98, wspace=0.0, hspace=0.0)
+    fig.canvas.draw()
+    data = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
+    img = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, 1:]
+    plt.close(fig)
+
+    return img
+
+
+def plot_bounding_boxes(ax, bboxes: np.ndarray, color: np.ndarray, alpha: float = 1.0, label=None) -> None:
     """Plots multiple bounding boxes.
 
     Args:
@@ -20,8 +76,6 @@ def plot_numpy_bounding_boxes(
         yaw).
       color: Shape (3,), represents RGB color for drawing.
       alpha: Alpha value for drawing, i.e. 0 means fully transparent.
-      as_center_pts: If set to True, bboxes will be drawn as center points,
-        instead of full bboxes.
       label: String, represents the meaning of the color for different boxes.
     """
     if bboxes.ndim != 2 or bboxes.shape[1] != 5:
@@ -31,72 +85,48 @@ def plot_numpy_bounding_boxes(
             )
         )
 
-    if as_center_pts:
-        ax.plot(
-            bboxes[:, 0],
-            bboxes[:, 1],
-            "o",
-            color=color,
-            ms=2,
-            alpha=alpha,
-            linewidth=1.7 * line_width_scale,
-            label=label,
-        )
-    else:
-        c = np.cos(bboxes[:, 4])
-        s = np.sin(bboxes[:, 4])
-        pt = np.array((bboxes[:, 0], bboxes[:, 1]))  # (2, N)
-        length, width = bboxes[:, 2], bboxes[:, 3]
-        u = np.array((c, s))
-        ut = np.array((s, -c))
+    c = np.cos(bboxes[:, 4])
+    s = np.sin(bboxes[:, 4])
+    pt = np.array((bboxes[:, 0], bboxes[:, 1]))  # (2, N)
+    length, width = bboxes[:, 2], bboxes[:, 3]
+    u = np.array((c, s))
+    ut = np.array((s, -c))
 
-        # Compute box corner coordinates.
-        tl = pt + length / 2 * u - width / 2 * ut
-        tr = pt + length / 2 * u + width / 2 * ut
-        br = pt - length / 2 * u + width / 2 * ut
-        bl = pt - length / 2 * u - width / 2 * ut
+    # Compute box corner coordinates.
+    tl = pt + length / 2 * u - width / 2 * ut
+    tr = pt + length / 2 * u + width / 2 * ut
+    br = pt - length / 2 * u + width / 2 * ut
+    bl = pt - length / 2 * u - width / 2 * ut
 
-        # Compute heading arrow using center left/right/front.
-        cl = pt - width / 2 * ut
-        cr = pt + width / 2 * ut
-        cf = pt + length / 2 * u
+    # Compute heading arrow using center left/right/front.
+    cl = pt - width / 2 * ut
+    cr = pt + width / 2 * ut
+    cf = pt + length / 2 * u
 
-        # Draw bboxes.
-        ax.plot(
-            [tl[0, :], tr[0, :], br[0, :], bl[0, :], tl[0, :]],
-            [tl[1, :], tr[1, :], br[1, :], bl[1, :], tl[1, :]],
-            color=color,
-            zorder=4,
-            linewidth=1.7 * line_width_scale,
-            alpha=alpha,
-            label=label,
-        )
+    # Draw bboxes.
+    ax.plot(
+        [tl[0, :], tr[0, :], br[0, :], bl[0, :], tl[0, :]],
+        [tl[1, :], tr[1, :], br[1, :], bl[1, :], tl[1, :]],
+        color=color,
+        alpha=alpha,
+        zorder=4,
+        label=label,
+    )
 
-        # Draw heading arrow.
-        ax.plot(
-            [cl[0, :], cr[0, :], cf[0, :], cl[0, :]],
-            [cl[1, :], cr[1, :], cf[1, :], cl[1, :]],
-            color=color,
-            zorder=6,
-            alpha=alpha,
-            linewidth=1.5 * line_width_scale,
-            label=label,
-        )
-
-
-def img_from_fig(fig) -> np.ndarray:
-    """Returns a [H, W, 3] uint8 np image from fig.canvas.tostring_argb()."""
-    fig.subplots_adjust(left=0.08, bottom=0.08, right=0.98, top=0.98, wspace=0.0, hspace=0.0)
-    fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
-    img = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, 1:]
-    plt.close(fig)
-
-    return img
+    # Draw heading arrow.
+    ax.plot(
+        [cl[0, :], cr[0, :], cf[0, :], cl[0, :]],
+        [cl[1, :], cr[1, :], cf[1, :], cl[1, :]],
+        color=color,
+        alpha=alpha,
+        zorder=6,
+        label=label,
+    )
 
 
 def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
     entity_type = entity["type"]
+    obj_color = ENTITY_COLORS.get(entity_type, "pink")
 
     # Vehicle
     if entity_type == 1:
@@ -112,17 +142,19 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
         goal_y = np.array(entity["goal_position_y"])
 
         if idx in active_agent_indices:
-            obj_color = np.array([65, 105, 225]) / 255.0  # Royal Blue
+            obj_color = AGENT_COLOR["ok"]
+            ax.scatter(goal_x, goal_y, s=20, color=obj_color, marker="o")
+            ax.add_patch(Circle((goal_x, goal_y), radius=2.0, color=obj_color, fill=False, linestyle="--"))
         elif idx in static_car_indices:
-            obj_color = np.array([139, 69, 19]) / 255.0  # Saddle Brown
+            obj_color = AGENT_COLOR["static"]
         else:
-            obj_color = np.array([0.3, 0.3, 0.3])  # Grey
+            obj_color = AGENT_COLOR["inactive"]
+
+        if entity["collision_state"]:
+            obj_color = AGENT_COLOR["collision"]
 
         bbox = np.array((x, y, length, width, heading)).reshape(1, 5)
-        plot_numpy_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
-
-        if idx in active_agent_indices:
-            ax.scatter(goal_x, goal_y, color="red", marker="*", s=20)
+        plot_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
 
     # Pedestrian
     if entity_type == 2:
@@ -131,16 +163,8 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
 
         x = np.array(entity["x"])
         y = np.array(entity["y"])
-        length = np.array(entity["length"])
-        width = np.array(entity["width"])
-        heading = np.array(entity["heading"])
-        goal_x = np.array(entity["goal_position_x"])
-        goal_y = np.array(entity["goal_position_y"])
 
-        obj_color = np.array([0.0, 1.0, 0.0])
-
-        bbox = np.array((x, y, length, width, heading)).reshape(1, 5)
-        plot_numpy_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
+        ax.scatter(x, y, color=obj_color, s=20, marker="o", zorder=3)
 
     # Cyclist
     if entity_type == 3:
@@ -149,32 +173,29 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
 
         x = np.array(entity["x"])
         y = np.array(entity["y"])
-        length = np.array(entity["length"])
-        width = np.array(entity["width"])
-        heading = np.array(entity["heading"])
-        goal_x = np.array(entity["goal_position_x"])
-        goal_y = np.array(entity["goal_position_y"])
 
-        obj_color = np.array([1.0, 0.0, 1.0])
+        ax.scatter(x, y, color=obj_color, s=200, marker="o", zorder=3)
+        # bbox = np.array((x, y, length, width, heading)).reshape(1, 5)
+        # plot_numpy_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
 
         bbox = np.array((x, y, length, width, heading)).reshape(1, 5)
         plot_numpy_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
 
     # Road lane
     if entity_type == 4:
-        ax.plot(entity["traj_x"], entity["traj_y"], color="lightgrey", linewidth=1)
+        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=1)
 
     # Road line
     if entity_type == 5:
-        ax.plot(entity["traj_x"], entity["traj_y"], color="grey", linewidth=1, linestyle="--")
+        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=1, linestyle="--")
 
     # Road edge
     if entity_type == 6:
-        ax.plot(entity["traj_x"], entity["traj_y"], color="black", linewidth=2)
+        ax.plot(entity["traj_x"], entity["traj_y"], color=obj_color, linewidth=2)
 
     # Stop sign
     if entity_type == 7:
-        ax.plot(entity["traj_x"], entity["traj_y"], color="red", linewidth=3, linestyle="--")
+        ax.scatter(entity["traj_x"], entity["traj_y"], color=obj_color, s=150, marker="H", zorder=3)
 
     # Crosswalk
     if entity_type == 8:
@@ -207,14 +228,16 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
         )
 
 
-def plot_simulator_state(scenario):
-    fig, axs = plt.subplots(figsize=(20, 20))
+def plot_simulator_state(scenario, viz_config: dict | None = None) -> np.ndarray:
+    viz_config = VizConfig() if viz_config is None else VizConfig(**viz_config)
+    # fig, ax = init_fig_ax(viz_config)
+
+    fig, ax = plt.subplots(figsize=(20, 20))
 
     for idx, entity in enumerate(scenario["entities"]):
-        plot_entity(axs, entity, idx, scenario["active_agent_indices"], scenario["static_car_indices"])
+        plot_entity(ax, entity, idx, scenario["active_agent_indices"], scenario["static_car_indices"])
 
-    axs.set_xlim(-75, 75)
-    axs.set_ylim(-75, 75)
-    axs.set_aspect("equal", adjustable="box")
+    ax.axis((-viz_config.back_x, viz_config.front_x, -viz_config.back_y, viz_config.front_y))
+    ax.set_aspect("equal", adjustable="box")
 
     return img_from_fig(fig)
