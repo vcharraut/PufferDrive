@@ -241,3 +241,100 @@ def plot_simulator_state(scenario, viz_config: dict | None = None) -> np.ndarray
     ax.set_aspect("equal", adjustable="box")
 
     return img_from_fig(fig)
+
+
+def unpack_obs(obs_flat):
+    """
+    Unpack the flattened observation into the ego state and visible state.
+    Args:
+        obs_flat (torch.Tensor): flattened observation tensor of shape (batch_size, obs_dim)
+    Return:
+        ego_state, road_objects, stop_signs, road_graph (torch.Tensor).
+    """
+    ego_state = obs_flat[:, :7]
+
+    max_cars = 63
+    default_feature_size = 7
+    max_road_segments = 200
+
+    size_partners_obs = max_cars * default_feature_size
+    partners_obs = obs_flat[:, 7 : 7 + size_partners_obs]
+    partners_obs = partners_obs.reshape(-1, max_cars, default_feature_size)
+
+    road_obs = obs_flat[
+        :,
+        7 + size_partners_obs : 7 + size_partners_obs + max_road_segments * default_feature_size,
+    ]
+    road_obs = road_obs.reshape(-1, max_road_segments, default_feature_size)
+
+    return ego_state[0], partners_obs[0], road_obs[0]
+
+
+def plot_observation(obs) -> np.ndarray:
+    fig, ax = plt.subplots(figsize=(20, 20))
+
+    obs = unpack_obs(obs)
+
+    ego_state, partners_obs, road_obs = obs
+
+    # Plot ego
+    goal_x, goal_y, ego_speed, ego_width, ego_length, _, _ = ego_state
+
+    ego_heading = np.arctan2(0, 1)
+    bbox = np.array((0, 0, ego_length, ego_width, ego_heading)).reshape(1, 5)
+    obj_color = np.array([0, 0, 1])
+    plot_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
+    ax.scatter(goal_x, goal_y, color="red", marker="*", s=100)
+
+    for i in range(partners_obs.shape[0]):
+        if np.all(partners_obs[i] == 0):
+            continue
+        (
+            partners_x,
+            partners_y,
+            partners_width,
+            partners_length,
+            partners_heading_x,
+            partners_heading_y,
+            partners_speed,
+        ) = partners_obs[i]
+        heading = np.arctan2(partners_heading_y, partners_heading_x)
+        bbox = np.array((partners_x, partners_y, partners_length, partners_width, heading)).reshape(1, 5)
+        plot_bounding_boxes(ax, bbox, color=np.array([0.5, 0.5, 0.5]), alpha=0.5)
+
+    for i in range(road_obs.shape[0]):
+        if np.all(road_obs[i] == 0):
+            continue
+        (
+            road_x,
+            road_y,
+            road_length,
+            road_width,
+            road_heading_x,
+            road_heading_y,
+            road_type,
+        ) = road_obs[i]
+
+        if road_type == 0:  # road lane
+            color = "lightgrey"
+        elif road_type == 1:  # road line
+            color = "grey"
+        elif road_type == 2:  # road edge
+            color = "black"
+        ax.scatter(road_x, road_y, color=color, s=10)
+        start = road_x + road_heading_x * road_length / 2
+        end = road_x - road_heading_x * road_length / 2
+        ax.plot(
+            [start, end],
+            [
+                road_y + road_heading_y * road_length / 2,
+                road_y - road_heading_y * road_length / 2,
+            ],
+            color=color,
+            linewidth=1,
+        )
+
+    ax.axis((-1, 1, -1, 1))
+    ax.set_aspect("equal", adjustable="box")
+
+    return img_from_fig(fig)
