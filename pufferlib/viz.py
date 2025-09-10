@@ -158,6 +158,7 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
 
     # Pedestrian
     if entity_type == 2:
+        return  # TODO Enable pedestrian visualization
         if entity["valid"] == 0:
             return
 
@@ -168,6 +169,7 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
 
     # Cyclist
     if entity_type == 3:
+        return  # TODO Enable cyclist visualization
         if entity["valid"] == 0:
             return
 
@@ -177,9 +179,6 @@ def plot_entity(ax, entity, idx, active_agent_indices, static_car_indices):
         ax.scatter(x, y, color=obj_color, s=200, marker="o", zorder=3)
         # bbox = np.array((x, y, length, width, heading)).reshape(1, 5)
         # plot_numpy_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
-
-        bbox = np.array((x, y, length, width, heading)).reshape(1, 5)
-        plot_numpy_bounding_boxes(ax, bbox, color=obj_color, alpha=0.5)
 
     # Road lane
     if entity_type == 4:

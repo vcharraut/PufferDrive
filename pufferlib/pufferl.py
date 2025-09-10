@@ -1053,16 +1053,24 @@ def eval(env_name, args=None, vecenv=None, policy=None, puffer_render=False):
     else:
         for i in range(10):  # TODO make num_videos configurable
             ob, _ = vecenv.reset()
+            # frames, frames_obs = [], []
             frames = []
             print(f"Generating video {i} for {env_name}")
 
+            scenario = vecenv.get_state()[0]
+
+            map_name = scenario["map_name"].split("/")[-1].split(".")[0]
+
             os.makedirs("videos", exist_ok=True)  # TODO make video path configurable
-            video_path = f"videos/eval_{env_name}_{i}.mp4"
+            video_path = f"videos/sim_{i}_{map_name}.mp4"
+            # video_path_obs = f"videos/obs_{i}_{map_name}.mp4"
 
             for _ in range(91):  # TODO add env length
                 scenario = vecenv.get_state()[0]  # TODO make env_indices configurable
 
                 img = pufferlib.viz.plot_simulator_state(scenario)
+
+                # obs_img = pufferlib.viz.plot_observation(ob)
 
                 with torch.no_grad():
                     ob = torch.as_tensor(ob).to(device)
@@ -1076,8 +1084,10 @@ def eval(env_name, args=None, vecenv=None, policy=None, puffer_render=False):
                 ob = vecenv.step(action)[0]
 
                 frames.append(img)
+                # frames_obs.append(obs_img)
 
             mediapy.write_video(video_path, np.array(frames), fps=10)
+            # mediapy.write_video(video_path_obs, np.array(frames_obs), fps=10)
 
 
 def sweep(args=None, env_name=None):
