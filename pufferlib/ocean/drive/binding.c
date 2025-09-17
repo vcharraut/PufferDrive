@@ -472,6 +472,7 @@ static PyObject* my_shared(PyObject* self, PyObject* args, PyObject* kwargs) {
 }
 
 static int my_init(Env* env, PyObject* args, PyObject* kwargs) {
+    env->action_type = unpack(kwargs, "action_type");
     env->human_agent_idx = unpack(kwargs, "human_agent_idx");
     env->reward_vehicle_collision = unpack(kwargs, "reward_vehicle_collision");
     env->reward_offroad_collision = unpack(kwargs, "reward_offroad_collision");
@@ -498,6 +499,7 @@ static int my_log(PyObject* dict, Log* log) {
     assign_to_dict(dict, "collision_rate", log->collision_rate);
     assign_to_dict(dict, "dnf_rate", log->dnf_rate);
     assign_to_dict(dict, "n", log->n);
+    assign_to_dict(dict, "lane_alignment_rate", log->lane_alignment_rate);
     assign_to_dict(dict, "completion_rate", log->completion_rate);
     assign_to_dict(dict, "clean_collision_rate", log->clean_collision_rate);
     return 0;
