@@ -515,6 +515,7 @@ class PuffeRL:
                             vecenv=self.vecenv,
                             policy=self.uncompiled_policy,
                             path=bin_path,
+                            silent=True,
                         )
 
                     except Exception as e:
@@ -523,16 +524,21 @@ class PuffeRL:
 
                     # Now call the C rendering function
                     try:
-                        # Create output directory for GIFs
-                        gif_output_dir = os.path.join(model_dir, "gifs")
-                        os.makedirs(gif_output_dir, exist_ok=True)
+                        # Create output directory for videos
+                        video_output_dir = os.path.join(model_dir, "videos")
+                        os.makedirs(video_output_dir, exist_ok=True)
 
                         # Copy the binary weights to the expected location
                         expected_weights_path = "resources/drive/puffer_drive_weights.bin"
                         os.makedirs(os.path.dirname(expected_weights_path), exist_ok=True)
                         shutil.copy2(bin_path, expected_weights_path)
 
-                        cmd = ["xvfb-run", "-s", "-screen 0 1280x720x24", "./drive"]
+                        # TODO: Fix memory leaks so that this is not needed
+                        # Suppress AddressSanitizer exit code (temp)
+                        env = os.environ.copy()
+                        env["ASAN_OPTIONS"] = "exitcode=0"
+
+                        cmd = ["xvfb-run", "-a", "-s", "-screen 0 1280x720x24", "./visualize"]
 
                         # Add render configurations
                         if config["show_grid"]:
@@ -544,26 +550,60 @@ class PuffeRL:
                         if config["show_human_logs"]:
                             cmd.append("--log-trajectories")
 
+                        if self.vecenv.driver_env.control_non_vehicles:
+                            cmd.append("--control-non-vehicles")
+                        if self.vecenv.driver_env.goal_radius is not None:
+                            cmd.extend(["--goal-radius", str(self.vecenv.driver_env.goal_radius)])
+                        if self.vecenv.driver_env.init_steps > 0:
+                            cmd.extend(["--init-steps", str(self.vecenv.driver_env.init_steps)])
+                        if config["render_map"] is not None:
+                            map_path = config["render_map"]
+                            if os.path.exists(map_path):
+                                cmd.extend(["--map-name", map_path])
+
+                        # Specify output paths for videos
+                        cmd.extend(["--output-topdown", "resources/drive/output_topdown.mp4"])
+                        cmd.extend(["--output-agent", "resources/drive/output_agent.mp4"])
+
+                        env_cfg = getattr(self, "vecenv", None)
+                        env_cfg = getattr(env_cfg, "driver_env", None)
+                        if env_cfg is not None:
+                            if getattr(env_cfg, "control_all_agents", False):
+                                cmd.append("--pure-self-play")
+                            n_policy = getattr(env_cfg, "num_policy_controlled_agents", -1)
+                            try:
+                                n_policy = int(n_policy)
+                            except (TypeError, ValueError):
+                                n_policy = -1
+                            if n_policy > 0:
+                                cmd += ["--num-policy-controlled-agents", str(n_policy)]
+                            if getattr(env_cfg, "deterministic_agent_selection", False):
+                                cmd.append("--deterministic-selection")
+                            if getattr(env_cfg, "num_maps", False):
+                                cmd.extend(["--num-maps", str(env_cfg.num_maps)])
+                            if getattr(env_cfg, "scenario_length", None):
+                                cmd.extend(["--scenario-length", str(env_cfg.scenario_length)])
+
                         # Call C code that runs eval_gif() in subprocess
                         result = subprocess.run(
-                            cmd,
-                            cwd=os.getcwd(),
-                            capture_output=True,
-                            text=True,
-                            timeout=120,
+                            cmd, cwd=os.getcwd(), capture_output=True, text=True, timeout=120, env=env
                         )
 
-                        if result.returncode == 1:
-                            # Move both generated GIFs to the model directory
-                            gifs = [
-                                ("resources/drive/output_topdown.gif", f"epoch_{self.epoch:06d}_topdown.gif"),
-                                ("resources/drive/output_agent.gif", f"epoch_{self.epoch:06d}_agent.gif"),
+                        vids_exist = os.path.exists("resources/drive/output_topdown.mp4") and os.path.exists(
+                            "resources/drive/output_agent.mp4"
+                        )
+
+                        if result.returncode == 0 or (result.returncode == 1 and vids_exist):
+                            # Move both generated videos to the model directory
+                            videos = [
+                                ("resources/drive/output_topdown.mp4", f"epoch_{self.epoch:06d}_topdown.mp4"),
+                                ("resources/drive/output_agent.mp4", f"epoch_{self.epoch:06d}_agent.mp4"),
                             ]
 
-                            for source_gif, target_filename in gifs:
-                                if os.path.exists(source_gif):
-                                    target_gif = os.path.join(gif_output_dir, target_filename)
-                                    shutil.move(source_gif, target_gif)
+                            for source_vid, target_filename in videos:
+                                if os.path.exists(source_vid):
+                                    target_gif = os.path.join(video_output_dir, target_filename)
+                                    shutil.move(source_vid, target_gif)
 
                                     # Log to wandb if available
                                     if hasattr(self.logger, "wandb") and self.logger.wandb:
@@ -571,17 +611,15 @@ class PuffeRL:
 
                                         view_type = "world_state" if "topdown" in target_filename else "agent_view"
                                         self.logger.wandb.log(
-                                            {f"render/{view_type}": wandb.Video(target_gif, format="gif")},
+                                            {f"render/{view_type}": wandb.Video(target_gif, format="mp4")},
                                             step=self.global_step,
                                         )
 
                                 else:
-                                    print(f"GIF generation completed but {source_gif} not found")
+                                    print(f"Video generation completed but {source_vid} not found")
 
-                            else:
-                                print("GIF generation completed but file not found")
                         else:
-                            print(f"C rendering failed: {result.stderr}")
+                            print(f"C rendering failed with exit code {result.returncode}: {result.stderr}")
 
                     except subprocess.TimeoutExpired:
                         print("C rendering timed out")
@@ -1248,7 +1286,7 @@ def profile(args=None, env_name=None, vecenv=None, policy=None):
     prof.export_chrome_trace("trace.json")
 
 
-def export(args=None, env_name=None, vecenv=None, policy=None, path=None):
+def export(args=None, env_name=None, vecenv=None, policy=None, path=None, silent=False):
     args = args or load_config(env_name)
     vecenv = vecenv or load_env(env_name, args)
     policy = policy or load_policy(args, vecenv)
@@ -1256,7 +1294,8 @@ def export(args=None, env_name=None, vecenv=None, policy=None, path=None):
     weights = []
     for name, param in policy.named_parameters():
         weights.append(param.data.cpu().numpy().flatten())
-        print(name, param.shape, param.data.cpu().numpy().ravel()[0])
+        if not silent:
+            print(name, param.shape, param.data.cpu().numpy().ravel()[0])
 
     weights = np.concatenate(weights)
     if path is None:
@@ -1264,31 +1303,32 @@ def export(args=None, env_name=None, vecenv=None, policy=None, path=None):
 
     weights.tofile(path)
 
-    print(f"Saved {len(weights)} weights to {path}")
+    if not silent:
+        print(f"Saved {len(weights)} weights to {path}")
 
 
 def ensure_drive_binary():
-    """Ensure the drive binary exists, build it once if necessary. This
+    """Ensure the visualize binary exists, build it once if necessary. This
     is required for rendering with raylib.
     """
-    if not os.path.exists("./drive"):
-        print("Drive binary not found, building...")
+    if not os.path.exists("./visualize"):
+        print("Visualize binary not found, building...")
         try:
             result = subprocess.run(
-                ["bash", "scripts/build_ocean.sh", "drive", "local"], capture_output=True, text=True, timeout=300
+                ["bash", "scripts/build_ocean.sh", "visualize", "local"], capture_output=True, text=True, timeout=300
             )
 
             if result.returncode == 0:
-                print("Successfully built drive binary")
+                print("Successfully built visualize binary")
             else:
                 print(f"Build failed: {result.stderr}")
-                raise RuntimeError("Failed to build drive binary for rendering")
+                raise RuntimeError("Failed to build visualize binary for rendering")
         except subprocess.TimeoutExpired:
             raise RuntimeError("Build timed out")
         except Exception as e:
             raise RuntimeError(f"Build error: {e}")
     else:
-        print("Drive binary found, ready for rendering")
+        print("Visualize binary found, ready for rendering")
 
 
 def autotune(args=None, env_name=None, vecenv=None, policy=None):

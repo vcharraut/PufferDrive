@@ -1,231 +1,36 @@
-#include <time.h>
-#include <unistd.h>
 #include "drive.h"
-#include "puffernet.h"
+#include "drivenet.h"
 
-typedef struct DriveNet DriveNet;
-struct DriveNet {
-    int num_agents;
-    float* obs_self;
-    float* obs_partner;
-    float* obs_road;
-    float* partner_linear_output;
-    float* road_linear_output;
-    float* partner_layernorm_output;
-    float* road_layernorm_output;
-    float* partner_linear_output_two;
-    float* road_linear_output_two;
-    Linear* ego_encoder;
-    Linear* road_encoder;
-    Linear* partner_encoder;
-    LayerNorm* ego_layernorm;
-    LayerNorm* road_layernorm;
-    LayerNorm* partner_layernorm;
-    Linear* ego_encoder_two;
-    Linear* road_encoder_two;
-    Linear* partner_encoder_two;
-    MaxDim1* partner_max;
-    MaxDim1* road_max;
-    CatDim1* cat1;
-    CatDim1* cat2;
-    GELU* gelu;
-    Linear* shared_embedding;
-    ReLU* relu;
-    LSTM* lstm;
-    Linear* actor;
-    Linear* value_fn;
-    Multidiscrete* multidiscrete;
-};
+// Use this test if the network changes to ensure that the forward pass
+// matches the torch implementation to the 3rd or ideally 4th decimal place
+void test_drivenet() {
+    int num_obs = 1848;
+    int num_actions = 2;
+    int num_agents = 4;
 
-DriveNet* init_drivenet(Weights* weights, int num_agents) {
-    DriveNet* net = calloc(1, sizeof(DriveNet));
-    int hidden_size = 256;
-    int input_size = 64;
+    float* observations = calloc(num_agents*num_obs, sizeof(float));
+    for (int i = 0; i < num_obs*num_agents; i++) {
+        observations[i] = i % 7;
+    }
 
-    net->num_agents = num_agents;
-    net->obs_self = calloc(num_agents*7, sizeof(float)); // 7 features
-    net->obs_partner = calloc(num_agents*63*7, sizeof(float)); // 63 objects, 7 features
-    net->obs_road = calloc(num_agents*200*13, sizeof(float)); // 200 objects, 13 features
-    net->partner_linear_output = calloc(num_agents*63*input_size, sizeof(float));
-    net->road_linear_output = calloc(num_agents*200*input_size, sizeof(float));
-    net->partner_linear_output_two = calloc(num_agents*63*input_size, sizeof(float));
-    net->road_linear_output_two = calloc(num_agents*200*input_size, sizeof(float));
-    net->partner_layernorm_output = calloc(num_agents*63*input_size, sizeof(float));
-    net->road_layernorm_output = calloc(num_agents*200*input_size, sizeof(float));
-    net->ego_encoder = make_linear(weights, num_agents, 7, input_size);
-    net->ego_layernorm = make_layernorm(weights, num_agents, input_size);
-    net->ego_encoder_two = make_linear(weights, num_agents, input_size, input_size);
-    net->road_encoder = make_linear(weights, num_agents, 13, input_size);
-    net->road_layernorm = make_layernorm(weights, num_agents, input_size);
-    net->road_encoder_two = make_linear(weights, num_agents, input_size, input_size);
-    net->partner_encoder = make_linear(weights, num_agents, 7, input_size);
-    net->partner_layernorm = make_layernorm(weights, num_agents, input_size);
-    net->partner_encoder_two = make_linear(weights, num_agents, input_size, input_size);
-    net->partner_max = make_max_dim1(num_agents, 63, input_size);
-    net->road_max = make_max_dim1(num_agents, 200, input_size);
-    net->cat1 = make_cat_dim1(num_agents, input_size, input_size);
-    net->cat2 = make_cat_dim1(num_agents, input_size + input_size, input_size);
-    net->gelu = make_gelu(num_agents, 3*input_size);
-    net->shared_embedding = make_linear(weights, num_agents, input_size*3, hidden_size);
-    net->relu = make_relu(num_agents, hidden_size);
-    net->actor = make_linear(weights, num_agents, hidden_size, 20);
-    net->value_fn = make_linear(weights, num_agents, hidden_size, 1);
-    net->lstm = make_lstm(weights, num_agents, hidden_size, 256);
-    memset(net->lstm->state_h, 0, num_agents*256*sizeof(float));
-    memset(net->lstm->state_c, 0, num_agents*256*sizeof(float));
-    int logit_sizes[2] = {7, 13};
-    net->multidiscrete = make_multidiscrete(num_agents, logit_sizes, 2);
-    return net;
+    int* actions = calloc(num_agents*num_actions, sizeof(int));
+
+    //Weights* weights = load_weights("resources/drive/puffer_drive_weights.bin");
+    Weights* weights = load_weights("puffer_drive_weights.bin");
+    DriveNet* net = init_drivenet(weights, num_agents);
+
+    forward(net, observations, actions);
+    for (int i = 0; i < num_agents*num_actions; i++) {
+        printf("idx: %d, action: %d, logits:", i, actions[i]);
+        for (int j = 0; j < num_actions; j++) {
+            printf(" %.6f", net->actor->output[i*num_actions + j]);
+        }
+        printf("\n");
+    }
+    free_drivenet(net);
+    free(weights);
 }
 
-void free_drivenet(DriveNet* net) {
-    free(net->obs_self);
-    free(net->obs_partner);
-    free(net->obs_road);
-    free(net->partner_linear_output);
-    free(net->road_linear_output);
-    free(net->partner_linear_output_two);
-    free(net->road_linear_output_two);
-    free(net->partner_layernorm_output);
-    free(net->road_layernorm_output);
-    free(net->ego_encoder);
-    free(net->road_encoder);
-    free(net->partner_encoder);
-    free(net->ego_layernorm);
-    free(net->road_layernorm);
-    free(net->partner_layernorm);
-    free(net->ego_encoder_two);
-    free(net->road_encoder_two);
-    free(net->partner_encoder_two);
-    free(net->partner_max);
-    free(net->road_max);
-    free(net->cat1);
-    free(net->cat2);
-    free(net->gelu);
-    free(net->shared_embedding);
-    free(net->relu);
-    free(net->multidiscrete);
-    free(net->actor);
-    free(net->value_fn);
-    free(net->lstm);
-    free(net);
-}
-
-void forward(DriveNet* net, float* observations, int* actions) {
-    // Clear previous observations
-    memset(net->obs_self, 0, net->num_agents * 7 * sizeof(float));
-    memset(net->obs_partner, 0, net->num_agents * 63 * 7 * sizeof(float));
-    memset(net->obs_road, 0, net->num_agents * 200 * 13 * sizeof(float));
-
-    // Reshape observations into 2D boards and additional features
-    float (*obs_self)[7] = (float (*)[7])net->obs_self;
-    float (*obs_partner)[63][7] = (float (*)[63][7])net->obs_partner;
-    float (*obs_road)[200][13] = (float (*)[200][13])net->obs_road;
-
-    for (int b = 0; b < net->num_agents; b++) {
-        int b_offset = b * (7 + 63*7 + 200*7);  // offset for each batch
-        int partner_offset = b_offset + 7;
-        int road_offset = b_offset + 7 + 63*7;
-        // Process self observation
-        for(int i = 0; i < 7; i++) {
-            obs_self[b][i] = observations[b_offset + i];
-        }
-
-        // Process partner observation
-        for(int i = 0; i < 63; i++) {
-            for(int j = 0; j < 7; j++) {
-                obs_partner[b][i][j] = observations[partner_offset + i*7 + j];
-            }
-        }
-
-        // Process road observation
-        for(int i = 0; i < 200; i++) {
-            for(int j = 0; j < 7; j++) {
-                obs_road[b][i][j] = observations[road_offset + i*7 + j];
-            }
-            for(int j = 0; j < 7; j++) {
-                if(j == observations[road_offset+i*7 + 6]) {
-                    obs_road[b][i][6 + j] = 1.0f;
-                } else {
-                    obs_road[b][i][6 + j] = 0.0f;
-                }
-            }
-        }
-    }
-
-    // Forward pass through the network
-    linear(net->ego_encoder, net->obs_self);
-    layernorm(net->ego_layernorm, net->ego_encoder->output);
-    linear(net->ego_encoder_two, net->ego_layernorm->output);
-    for (int b = 0; b < net->num_agents; b++) {
-        for (int obj = 0; obj < 63; obj++) {
-            // Get the 7 features for this object
-            float* obj_features = &net->obs_partner[b*63*7 + obj*7];
-            // Apply linear layer to this object
-            _linear(obj_features, net->partner_encoder->weights, net->partner_encoder->bias,
-                   &net->partner_linear_output[b*63*64 + obj*64], 1, 7, 64);
-        }
-    }
-
-    for (int b = 0; b < net->num_agents; b++) {
-        for (int obj = 0; obj < 63; obj++) {
-            float* after_first = &net->partner_linear_output[b*63*64 + obj*64];
-            _layernorm(after_first, net->partner_layernorm->weights, net->partner_layernorm->bias,
-                        &net->partner_layernorm_output[b*63*64 + obj*64], 1, 64);
-        }
-    }
-    for (int b = 0; b < net->num_agents; b++) {
-        for (int obj = 0; obj < 63; obj++) {
-            // Get the 7 features for this object
-            float* obj_features = &net->partner_layernorm_output[b*63*64 + obj*64];
-            // Apply linear layer to this object
-            _linear(obj_features, net->partner_encoder_two->weights, net->partner_encoder_two->bias,
-                   &net->partner_linear_output_two[b*63*64 + obj*64], 1, 64, 64);
-
-        }
-    }
-
-    // Process road objects: apply linear to each object individually
-    for (int b = 0; b < net->num_agents; b++) {
-        for (int obj = 0; obj < 200; obj++) {
-            // Get the 13 features for this object
-            float* obj_features = &net->obs_road[b*200*13 + obj*13];
-            // Apply linear layer to this object
-            _linear(obj_features, net->road_encoder->weights, net->road_encoder->bias,
-                   &net->road_linear_output[b*200*64 + obj*64], 1, 13, 64);
-        }
-    }
-
-    // Apply layer norm and second linear to each road object
-    for (int b = 0; b < net->num_agents; b++) {
-        for (int obj = 0; obj < 200; obj++) {
-            float* after_first = &net->road_linear_output[b*200*64 + obj*64];
-            _layernorm(after_first, net->road_layernorm->weights, net->road_layernorm->bias,
-                        &net->road_layernorm_output[b*200*64 + obj*64], 1, 64);
-        }
-    }
-    for (int b = 0; b < net->num_agents; b++) {
-        for (int obj = 0; obj < 200; obj++) {
-            float* after_first = &net->road_layernorm_output[b*200*64 + obj*64];
-            _linear(after_first, net->road_encoder_two->weights, net->road_encoder_two->bias,
-                    &net->road_linear_output_two[b*200*64 + obj*64], 1, 64, 64);
-        }
-    }
-
-    max_dim1(net->partner_max, net->partner_linear_output_two);
-    max_dim1(net->road_max, net->road_linear_output_two);
-    cat_dim1(net->cat1, net->ego_encoder_two->output, net->road_max->output);
-    cat_dim1(net->cat2, net->cat1->output, net->partner_max->output);
-    gelu(net->gelu, net->cat2->output);
-    linear(net->shared_embedding, net->gelu->output);
-    relu(net->relu, net->shared_embedding->output);
-    lstm(net->lstm, net->relu->output);
-    linear(net->actor, net->lstm->state_h);
-    linear(net->value_fn, net->lstm->state_h);
-
-    // Get action by taking argmax of actor output
-    softmax_multidiscrete(net->multidiscrete, net->actor->output, actions);
-}
 void demo() {
 
     Drive env = {
@@ -233,13 +38,13 @@ void demo() {
         .human_agent_idx = 0,
         .reward_vehicle_collision = -0.1f,
         .reward_offroad_collision = -0.1f,
-	    .map_name = "resources/drive/binaries/map_942.bin",
-        .spawn_immunity_timer = 50
+        .goal_radius = 2.0f,
+	    .map_name = "resources/drive/binaries/map_000.bin",
     };
     allocate(&env);
     c_reset(&env);
     c_render(&env);
-    Weights* weights = load_weights("resources/drive/puffer_drive_weights.bin", 595925);
+    Weights* weights = load_weights("resources/drive/puffer_drive_weights.bin");
     DriveNet* net = init_drivenet(weights, env.active_agent_count);
     //Client* client = make_client(&env);
     int accel_delta = 2;
@@ -284,7 +89,7 @@ void demo() {
             }
         }
         c_step(&env);
-       c_render(&env);
+        c_render(&env);
     }
 
     close_client(env.client);
@@ -293,163 +98,13 @@ void demo() {
     free(weights);
 }
 
-
-static int run_cmd(const char *cmd) {
-    int rc = system(cmd);
-    if (rc != 0) {
-        fprintf(stderr, "[ffmpeg] command failed (%d): %s\n", rc, cmd);
-    }
-    return rc;
-}
-
-// Make a high-quality GIF from numbered PNG frames like frame_000.png
-static int make_gif_from_frames(const char *pattern, int fps,
-                                const char *palette_path,
-                                const char *out_gif) {
-    char cmd[1024];
-
-    // 1) Generate palette (no quotes needed for simple filter)
-    //    NOTE: if your frames start at 000, you don't need -start_number.
-    snprintf(cmd, sizeof(cmd),
-             "ffmpeg -y -framerate %d -i %s -vf palettegen %s",
-             fps, pattern, palette_path);
-    if (run_cmd(cmd) != 0) return -1;
-
-    // 2) Use palette to encode the GIF
-    snprintf(cmd, sizeof(cmd),
-             "ffmpeg -y -framerate %d -i %s -i %s -lavfi paletteuse -loop 0 %s",
-             fps, pattern, palette_path, out_gif);
-    if (run_cmd(cmd) != 0) return -1;
-
-    return 0;
-}
-
-void eval_gif(const char* map_name, int show_grid, int obs_only, int lasers, int log_trajectories) {
-    // Use default if no map provided
-    if (map_name == NULL) {
-        map_name = "resources/drive/binaries/map_942.bin";
-    }
-
-    // Make env
-    Drive env = {
-        .dynamics_model = CLASSIC,
-        .reward_vehicle_collision = -0.1f,
-        .reward_offroad_collision = -0.1f,
-	    .map_name = map_name,
-        .spawn_immunity_timer = 50
-    };
-    allocate(&env);
-    // set which vehicle to focus on for obs mode
-    env.human_agent_idx = 0;
-    c_reset(&env);
-
-    /*if (env.client == NULL) {
-        env.client = make_client(&env);
-    }*/
-
-    Client* client = (Client*)calloc(1,sizeof(Client));
-    env.client = client;
-
-    SetConfigFlags(FLAG_WINDOW_HIDDEN);
-    InitWindow(1280, 704, "headless");
-
-    float map_width = env.map_corners[2] - env.map_corners[0];
-    float map_height = env.map_corners[3] - env.map_corners[1];
-    float scale = 8.0f;
-    float img_width = (int)(map_width * scale);
-    float img_height = (int)(map_height * scale);
-    RenderTexture2D target = LoadRenderTexture(img_width, img_height);
-
-    Weights* weights = load_weights("resources/drive/puffer_drive_weights.bin", 595925);
-    DriveNet* net = init_drivenet(weights, env.active_agent_count);
-
-    int frame_count = 91;
-    char filename[256];
-    int rollout = 1;
-    int rollout_trajectory_snapshot = 0;
-    int log_trajectory = log_trajectories;
-
-    if (rollout) {
-        // Generate top-down view frames
-        for(int i = 0; i < frame_count; i++) {
-            float* path_taken = NULL;
-            snprintf(filename, sizeof(filename), "resources/drive/frame_topdown_%03d.png", i);
-            // Always set obs_only=0, lasers=0 for top-down view (full world state)
-            saveTopDownImage(&env, client, filename, target, map_height, 0, 0, rollout_trajectory_snapshot, frame_count, path_taken, log_trajectory, show_grid);
-            int (*actions)[2] = (int(*)[2])env.actions;
-            forward(net, env.observations, env.actions);
-            c_step(&env);
-        }
-
-        // Reset environment to initial state
-        c_reset(&env);
-
-        // Generate agent view frames
-        for(int i = 0; i < frame_count; i++) {
-            float* path_taken = NULL;
-            snprintf(filename, sizeof(filename), "resources/drive/frame_agent_%03d.png", i);
-            saveAgentViewImage(&env, client, filename, target, map_height, obs_only, lasers, show_grid); // obs_only=1, lasers=0, show_grid=0
-            int (*actions)[2] = (int(*)[2])env.actions;
-            forward(net, env.observations, env.actions);
-            c_step(&env);
-        }
-
-        // Generate both GIFs
-        int gif_success_topdown = make_gif_from_frames(
-            "resources/drive/frame_topdown_%03d.png",
-            30, // fps
-            "resources/drive/palette_topdown.png",
-            "resources/drive/output_topdown.gif"
-        );
-
-        int gif_success_agent = make_gif_from_frames(
-            "resources/drive/frame_agent_%03d.png",
-            15, // fps
-            "resources/drive/palette_agent.png",
-            "resources/drive/output_agent.gif"
-        );
-
-        if(gif_success_topdown == 0) {
-            run_cmd("rm -f resources/drive/frame_topdown_*.png resources/drive/palette_topdown.png");
-        }
-        if(gif_success_agent == 0) {
-            run_cmd("rm -f resources/drive/frame_agent_*.png resources/drive/palette_agent.png");
-        }
-    }
-    if (rollout_trajectory_snapshot){
-        float* path_taken = (float*)calloc(2*frame_count, sizeof(float));
-        snprintf(filename, sizeof(filename),"resources/drive/snapshot.png");
-        float goal_frame;
-        for(int i=0; i < frame_count; i++){
-            int agent_idx = env.active_agent_indices[env.human_agent_idx];
-            path_taken[i*2] = env.entities[agent_idx].x;
-            path_taken[i*2+1] = env.entities[agent_idx].y;
-            if(env.entities[agent_idx].reached_goal_this_episode){
-                goal_frame =i;
-                break;
-            }
-            printf("x: %f, y: %f \n", path_taken[i*2], path_taken[i*2+1]);
-            forward(net, env.observations, env.actions);
-            c_step(&env);
-        }
-        c_reset(&env);
-        saveTopDownImage(&env, client, filename, target, map_height, obs_only, lasers, rollout_trajectory_snapshot, goal_frame, path_taken, log_trajectory, 0);
-    }
-    UnloadRenderTexture(target);
-    CloseWindow();
-    free(client);
-    free_allocated(&env);
-    free_drivenet(net);
-    free(weights);
-
-}
-
 void performance_test() {
     long test_time = 10;
     Drive env = {
         .dynamics_model = CLASSIC,
         .human_agent_idx = 0,
-	    .map_name = "resources/drive/binaries/map_942.bin"
+        .goal_radius = 2.0f,
+	    .map_name = "resources/drive/binaries/map_000.bin"
     };
     clock_t start_time, end_time;
     double cpu_time_used;
@@ -481,26 +136,9 @@ void performance_test() {
     free_allocated(&env);
 }
 
-int main(int argc, char* argv[]) {
-    int show_grid = 0;
-    int obs_only = 0;
-    int lasers = 0;
-    int log_trajectories = 1;
-
-    // Parse command line arguments
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--show-grid") == 0) {
-            show_grid = 1;
-        } else if (strcmp(argv[i], "--obs-only") == 0) {
-            obs_only = 1;
-        } else if (strcmp(argv[i], "--lasers") == 0) {
-            lasers = 1;
-        } else if (strcmp(argv[i], "--log_trajectories") == 0) {
-            log_trajectories = 0;
-        }
-    }
-    eval_gif(NULL, show_grid, obs_only, lasers, log_trajectories);
-    //demo();
+int main() {
     //performance_test();
+    demo();
+    //test_drivenet();
     return 0;
 }

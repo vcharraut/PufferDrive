@@ -18,6 +18,12 @@ Activate the venv
 source .venv/bin/activate
 ```
 
+Install `inih`
+
+```
+wget https://github.com/benhoyt/inih/archive/r62.tar.gz
+```
+
 Inside the venv, install the dependencies
 ```
 uv pip install -e .
@@ -79,6 +85,12 @@ sudo apt update
 sudo apt install ffmpeg xvfb
 ```
 
+For HPC(There are no root privileges), so install into the conda environment
+```bash
+conda install -c conda-forge xorg-x11-server-xvfb-cos6-x86_64
+conda install -c conda-forge ffmpeg
+```
+
 - `ffmpeg`: Video processing and conversion
 - `xvfb`: Virtual display for headless environments
 
@@ -86,12 +98,12 @@ sudo apt install ffmpeg xvfb
 
 1. Build the application:
 ```bash
-bash scripts/build_ocean.sh drive local
+bash scripts/build_ocean.sh visualize local
 ```
 
 2. Run with virtual display:
 ```bash
-xvfb-run -s "-screen 0 1280x720x24" ./drive
+xvfb-run -s "-screen 0 1280x720x24" ./visualize
 ```
 
 The `-s` flag sets up a virtual screen at 1280x720 resolution with 24-bit color depth.
